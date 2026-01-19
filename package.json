@@ -1,0 +1,26 @@
+{
+  "name": "remote-assistant",
+  "version": "1.0.0",
+  "description": "Telegram bot bridge for Claude Code CLI on remote VM",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "watch": "tsc --watch"
+  },
+  "keywords": ["claude", "telegram", "bot", "ml", "remote"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "dotenv": "^16.4.5",
+    "node-telegram-bot-api": "^0.66.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/node-telegram-bot-api": "^0.64.7",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  }
+}
