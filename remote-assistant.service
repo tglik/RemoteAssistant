@@ -1,0 +1,52 @@
+# SystemD Service File for RemoteAssistant
+#
+# Installation:
+# 1. Edit this file and replace placeholders:
+#    - YOUR_USERNAME: your Linux username
+#    - /path/to/RemoteAssistant: absolute path to RemoteAssistant directory
+#    - /path/to/node: path to node binary (find with: which node)
+#
+# 2. Copy to systemd directory:
+#    sudo cp remote-assistant.service /etc/systemd/system/
+#
+# 3. Enable and start:
+#    sudo systemctl daemon-reload
+#    sudo systemctl enable remote-assistant
+#    sudo systemctl start remote-assistant
+#
+# 4. Check status:
+#    sudo systemctl status remote-assistant
+#
+# 5. View logs:
+#    sudo journalctl -u remote-assistant -f
+
+[Unit]
+Description=RemoteAssistant Telegram Bot for Claude Code CLI
+Documentation=https://github.com/your-repo/remote-assistant
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/RemoteAssistant
+ExecStart=/path/to/node /path/to/RemoteAssistant/dist/index.js
+Restart=always
+RestartSec=10
+
+# Environment variables (alternatively, use EnvironmentFile=)
+# Environment=NODE_ENV=production
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=remote-assistant
+
+# Security hardening (optional)
+# NoNewPrivileges=true
+# PrivateTmp=true
+# ProtectSystem=strict
+# ProtectHome=read-only
+# ReadWritePaths=/path/to/RemoteAssistant/sessions
+
+[Install]
+WantedBy=multi-user.target
