@@ -1,15 +1,67 @@
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { SessionManager } from './session-manager';
-
-const execAsync = promisify(exec);
 
 export interface ClaudeResponse {
   success: boolean;
   output: string;
   error?: string;
+}
+
+/**
+ * Helper function to execute commands using spawn for better reliability
+ */
+function execCommand(command: string, options: {
+  cwd: string;
+  timeout?: number;
+  env?: NodeJS.ProcessEnv;
+}): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    // Execute using Node's shell mode for portability.
+    // On POSIX, Node uses /bin/sh; on Windows, it uses cmd.exe.
+    // This avoids hard-requiring bash (and avoids ENOENT when bash exists but is not runnable).
+    const child = spawn(command, {
+      cwd: options.cwd,
+      env: options.env || process.env,
+      shell: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout?.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr?.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    const timeout = options.timeout ? setTimeout(() => {
+      child.kill();
+      reject(new Error(`Command timed out after ${options.timeout}ms`));
+    }, options.timeout) : null;
+
+    child.on('error', (error) => {
+      if (timeout) clearTimeout(timeout);
+      reject(error);
+    });
+
+    child.on('close', (code) => {
+      if (timeout) clearTimeout(timeout);
+      if (code === 0 || stdout || stderr) {
+        resolve({ stdout, stderr });
+      } else {
+        const error: any = new Error(`Command failed with exit code ${code}`);
+        error.code = code;
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+      }
+    });
+  });
 }
 
 /**
@@ -50,26 +102,19 @@ export class ClaudeExecutor {
       }
 
       // Build the claude command
-      // Using headless mode with JSON output for structured responses
-      const command = `claude -p "${this.escapeQuery(fullQuery)}" --output json`;
+      // Using headless mode (-p flag for prompt)
+      const command = `claude -p "${this.escapeQuery(fullQuery)}"`;
 
       console.log(`Executing in ${this.workDir}:`, command.substring(0, 100) + '...');
 
-      const { stdout, stderr } = await execAsync(command, {
+      const { stdout, stderr } = await execCommand(command, {
         cwd: this.workDir,
-        maxBuffer: 10 * 1024 * 1024, // 10MB buffer for large outputs
         timeout: 300000, // 5 minute timeout
+        env: { ...process.env, PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin' },
       });
 
-      // Parse JSON output if available
-      let output = stdout;
-      try {
-        const jsonOutput = JSON.parse(stdout);
-        output = this.formatJsonOutput(jsonOutput);
-      } catch {
-        // Not JSON, use raw output
-        output = stdout;
-      }
+      // Use the stdout directly
+      let output = stdout.trim() || stderr.trim();
 
       // Save to session history if available
       if (this.sessionManager) {
@@ -96,12 +141,12 @@ export class ClaudeExecutor {
    */
   async executeBashCommand(command: string): Promise<ClaudeResponse> {
     try {
-      console.log(`Executing bash command in ${this.workDir}:`, command);
+      console.log(`Executing command in ${this.workDir}:`, command);
 
-      const { stdout, stderr } = await execAsync(command, {
+      const { stdout, stderr } = await execCommand(command, {
         cwd: this.workDir,
-        maxBuffer: 10 * 1024 * 1024,
-        timeout: 60000, // 1 minute timeout for bash commands
+        timeout: 60000, // 1 minute timeout
+        env: { ...process.env, PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin' },
       });
 
       return {
@@ -109,7 +154,7 @@ export class ClaudeExecutor {
         output: stdout || stderr || 'Command executed successfully',
       };
     } catch (error: any) {
-      console.error('Bash execution error:', error);
+      console.error('Command execution error:', error);
       return {
         success: false,
         output: error.stdout || '',
@@ -123,7 +168,10 @@ export class ClaudeExecutor {
    */
   async checkClaudeAvailability(): Promise<boolean> {
     try {
-      await execAsync('claude --version');
+      await execCommand('claude --version', {
+        cwd: this.workDir,
+        timeout: 5000,
+      });
       return true;
     } catch {
       return false;
@@ -135,16 +183,6 @@ export class ClaudeExecutor {
    */
   private escapeQuery(query: string): string {
     return query.replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
-  }
-
-  /**
-   * Format JSON output from Claude CLI
-   */
-  private formatJsonOutput(json: any): string {
-    if (typeof json === 'string') return json;
-    if (json.response) return json.response;
-    if (json.output) return json.output;
-    return JSON.stringify(json, null, 2);
   }
 
   /**
@@ -162,14 +200,33 @@ export class ClaudeExecutor {
         commands.map(cmd => this.executeBashCommand(cmd))
       );
 
+      // Format GPU output
+      const gpuOutput = results[0].output?.trim() || 'N/A';
+      let gpuFormatted = '';
+
+      if (gpuOutput === 'No GPU found' || gpuOutput === 'N/A') {
+        gpuFormatted = 'No GPU found';
+      } else {
+        // Parse CSV: index, name, utilization, memory.used, memory.total
+        const gpuLines = gpuOutput.split('\n').filter(line => line.trim());
+        gpuFormatted = gpuLines.map(line => {
+          const parts = line.split(',').map(p => p.trim());
+          if (parts.length >= 5) {
+            const [index, name, util, memUsed, memTotal] = parts;
+            return `GPU ${index}: ${name}\n  Compute: ${util}% | Memory: ${memUsed}MB / ${memTotal}MB (${Math.round((parseFloat(memUsed) / parseFloat(memTotal)) * 100)}%)`;
+          }
+          return line;
+        }).join('\n');
+      }
+
       return [
         '📊 System Stats:',
         '',
         '🎮 GPU:',
-        results[0].output || 'N/A',
+        gpuFormatted,
         '',
-        '💻 ' + (results[1].output || 'CPU: N/A'),
-        '🧠 ' + (results[2].output || 'Memory: N/A'),
+        '💻 ' + (results[1].output?.trim() || 'CPU: N/A'),
+        '🧠 ' + (results[2].output?.trim() || 'Memory: N/A'),
       ].join('\n');
     } catch (error) {
       return '❌ Failed to get system stats';
