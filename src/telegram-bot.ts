@@ -133,6 +133,7 @@ export class RemoteAssistantBot {
       const userId = msg.from?.id.toString() || 'unknown';
 
       await this.sessionManager.clearSession(userId);
+      this.executor.clearSession(userId); // Also clear Claude session
       await this.bot.sendMessage(
         chatId,
         '🗑️ Conversation history cleared. Starting fresh!'

@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { SessionManager } from './session-manager';
 
 export interface ClaudeResponse {
@@ -71,11 +72,13 @@ export class ClaudeExecutor {
   private workDir: string;
   private sessionDir: string;
   private sessionManager?: SessionManager;
+  private userSessionIds: Map<string, string>; // Maps userId to Claude session UUID
 
   constructor(workDir: string, sessionManager?: SessionManager) {
     this.workDir = workDir;
     this.sessionDir = path.join(process.cwd(), 'sessions');
     this.sessionManager = sessionManager;
+    this.userSessionIds = new Map();
   }
 
   async initialize(): Promise<void> {
@@ -88,24 +91,35 @@ export class ClaudeExecutor {
   }
 
   /**
+   * Generate a new UUID for Claude session
+   */
+  private generateSessionId(): string {
+    return crypto.randomUUID();
+  }
+
+  /**
    * Execute a query using Claude Code CLI in headless mode
+   * Uses --session-id to create new sessions and --resume to continue them
    */
   async executeQuery(query: string, userId: string): Promise<ClaudeResponse> {
     try {
-      // Get conversation context if session manager is available
-      let fullQuery = query;
-      if (this.sessionManager) {
-        const context = await this.sessionManager.getConversationContext(userId, 5);
-        if (context) {
-          fullQuery = `${context}\n${query}`;
-        }
+      const existingSessionId = this.userSessionIds.get(userId);
+
+      let command: string;
+      if (existingSessionId) {
+        // Resume existing session using the stored UUID
+        command = `claude --resume "${existingSessionId}" -p "${this.escapeQuery(query)}"`;
+        console.log(`Resuming session ${existingSessionId} for user ${userId}`);
+      } else {
+        // First query - create new session with a fresh UUID
+        const newSessionId = this.generateSessionId();
+        command = `claude --session-id "${newSessionId}" -p "${this.escapeQuery(query)}"`;
+        console.log(`Creating new session ${newSessionId} for user ${userId}`);
+        this.userSessionIds.set(userId, newSessionId);
       }
 
-      // Build the claude command
-      // Using headless mode (-p flag for prompt)
-      const command = `claude -p "${this.escapeQuery(fullQuery)}"`;
-
-      console.log(`Executing in ${this.workDir}:`, command.substring(0, 100) + '...');
+      console.log(`Executing in ${this.workDir}`);
+      console.log(`Query: ${query.substring(0, 50)}...`);
 
       const { stdout, stderr } = await execCommand(command, {
         cwd: this.workDir,
@@ -183,6 +197,15 @@ export class ClaudeExecutor {
    */
   private escapeQuery(query: string): string {
     return query.replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+  }
+
+  /**
+   * Clear the session for a user (will create a new session on next query)
+   */
+  clearSession(userId: string): void {
+    const oldSessionId = this.userSessionIds.get(userId);
+    this.userSessionIds.delete(userId);
+    console.log(`Cleared session ${oldSessionId} for user ${userId} - next query will start a new session`);
   }
 
   /**
