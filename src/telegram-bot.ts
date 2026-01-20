@@ -28,7 +28,7 @@ export class RemoteAssistantBot {
     this.bot.setMyCommands([
       { command: 'start', description: 'Start the bot and see help' },
       { command: 'stats', description: 'Get GPU/CPU/Memory stats' },
-      { command: 'logs', description: 'Get recent training logs' },
+      { command: 'logs', description: 'Get tmux session output' },
       { command: 'processes', description: 'Check running processes' },
       { command: 'clear', description: 'Clear conversation history' },
       { command: 'help', description: 'Show help message' },
@@ -65,8 +65,8 @@ export class RemoteAssistantBot {
         `🤖 *RemoteAssistant Help*\n\n` +
           `*Commands:*\n` +
           `/stats - System statistics (GPU/CPU/Memory)\n` +
-          `/logs [file] [lines] - Get training logs\n` +
-          `  Example: /logs training.log 100\n` +
+          `/logs [session] [lines] - Get tmux session output\n` +
+          `  Example: /logs 0 100 (default: session "0", 50 lines)\n` +
           `/processes [name] - Check running processes\n` +
           `  Example: /processes python\n\n` +
           `*Natural Language Queries:*\n` +
@@ -98,16 +98,17 @@ export class RemoteAssistantBot {
 
       const chatId = msg.chat.id;
       const args = match?.[1]?.trim().split(/\s+/) || [];
-      const logFile = args[0] || 'training.log';
+      const sessionName = args[0] || '0';
       const lines = parseInt(args[1]) || 50;
 
       await this.bot.sendMessage(
         chatId,
-        `📄 Fetching last ${lines} lines from ${logFile}...`
+        `📄 Fetching last ${lines} lines from tmux session "${sessionName}"...`
       );
 
-      const logs = await this.executor.getTrainingLogs(logFile, lines);
-      await this.sendLongMessage(chatId, `\`\`\`\n${logs}\n\`\`\``, 'Markdown');
+      const logs = await this.executor.getTmuxLogs(sessionName, lines);
+      // Send as plain text to avoid Markdown parsing issues
+      await this.sendLongMessage(chatId, logs);
     });
 
     // /processes command
@@ -120,7 +121,8 @@ export class RemoteAssistantBot {
       await this.bot.sendMessage(chatId, `🔍 Checking for "${processName}" processes...`);
 
       const processes = await this.executor.checkProcesses(processName);
-      await this.sendLongMessage(chatId, `\`\`\`\n${processes}\n\`\`\``, 'Markdown');
+      // Send as plain text to avoid Markdown parsing issues
+      await this.sendLongMessage(chatId, processes);
     });
 
     // /clear command

@@ -242,6 +242,28 @@ export class ClaudeExecutor {
   }
 
   /**
+   * Get tmux session output (last N lines)
+   */
+  async getTmuxLogs(sessionName: string, lines: number = 50): Promise<string> {
+    // First check if tmux session exists
+    const checkResult = await this.executeBashCommand(
+      `tmux list-sessions 2>/dev/null | grep -q "^${sessionName}:" && echo "exists" || echo "not found"`
+    );
+
+    if (checkResult.output?.trim() === 'not found') {
+      return `Tmux session "${sessionName}" not found.\n\nAvailable sessions:\n` +
+        (await this.executeBashCommand('tmux list-sessions 2>/dev/null || echo "No tmux sessions found"')).output;
+    }
+
+    // Capture the pane output
+    const result = await this.executeBashCommand(
+      `tmux capture-pane -p -t "${sessionName}" -S -${lines} 2>/dev/null || echo "Failed to capture tmux output"`
+    );
+
+    return result.output || 'No output captured';
+  }
+
+  /**
    * Check if processes are running (by name)
    */
   async checkProcesses(processName: string): Promise<string> {
